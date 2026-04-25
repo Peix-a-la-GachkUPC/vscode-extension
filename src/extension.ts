@@ -25,7 +25,7 @@ function toScopedFilePath(doc: vscode.TextDocument): string | undefined {
     }
 
     const relativePath = vscode.workspace.asRelativePath(doc.uri, false).replace(/\\/g, '/');
-    return `${folder.name}/${relativePath}`;
+    return `${relativePath}`;
 }
 
 function uriFromScopedFilePath(scopedFilePath: string): vscode.Uri | undefined {
