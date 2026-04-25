@@ -26,28 +26,43 @@ function toScopedFilePath(doc: vscode.TextDocument): string | undefined {
     }
 
     const relativePath = vscode.workspace.asRelativePath(doc.uri, false).replace(/\\/g, '/');
-    return `${relativePath}`;
+    return `./${relativePath}`;
 }
 
 function uriFromScopedFilePath(scopedFilePath: string): vscode.Uri | undefined {
-    const slashIndex = scopedFilePath.indexOf('/');
-    if (slashIndex <= 0 || slashIndex >= scopedFilePath.length - 1) {
-        return undefined;
-    }
-
-    const folderName = scopedFilePath.slice(0, slashIndex);
-    const relativePath = scopedFilePath.slice(slashIndex + 1);
-    if (!relativePath) {
-        return undefined;
-    }
-
+    const normalized = scopedFilePath.replace(/\\/g, '/');
     const folders = vscode.workspace.workspaceFolders ?? [];
-    const folder = folders.find((candidate) => candidate.name === folderName);
-    if (!folder || folder.uri.scheme !== 'file') {
+
+    if (normalized.startsWith('./')) {
+        const relativePath = normalized.slice(2);
+        if (!relativePath) {
+            return undefined;
+        }
+        if (folders.length === 1 && folders[0].uri.scheme === 'file') {
+            return vscode.Uri.file(path.join(folders[0].uri.fsPath, relativePath));
+        }
         return undefined;
     }
 
-    return vscode.Uri.file(path.join(folder.uri.fsPath, relativePath));
+    const slashIndex = scopedFilePath.indexOf('/');
+    if (slashIndex > 0 && slashIndex < normalized.length - 1) {
+        const folderName = normalized.slice(0, slashIndex);
+        const relativePath = normalized.slice(slashIndex + 1);
+        if (!relativePath) {
+            return undefined;
+        }
+
+        const folder = folders.find((candidate) => candidate.name === folderName);
+        if (folder && folder.uri.scheme === 'file') {
+            return vscode.Uri.file(path.join(folder.uri.fsPath, relativePath));
+        }
+    }
+
+    if (folders.length === 1 && folders[0].uri.scheme === 'file') {
+        return vscode.Uri.file(path.join(folders[0].uri.fsPath, normalized));
+    }
+
+    return undefined;
 }
 
 async function applyCommandsToDocument(document: vscode.TextDocument, commands: ChangeCommand[]): Promise<void> {
