@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import WebSocket from 'ws';
 
 const WS_URL = 'ws://127.0.0.1:42069';
+const SEND_DEBOUNCE_MS = 75;
+const SEND_MAX_WAIT_MS = 250;
 
 type ChangeCommand = { index: number; add: string } | { index: number; del: number };
 
@@ -103,6 +105,50 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push({ dispose: () => bridge.dispose() });
 
+    const pendingCommandsByUri = new Map<string, ChangeCommand[]>();
+    const flushTimersByUri = new Map<string, ReturnType<typeof setTimeout>>();
+    const firstBufferedAtByUri = new Map<string, number>();
+
+    const flushBuffered = (uri: string) => {
+        const timer = flushTimersByUri.get(uri);
+        if (timer) {
+            clearTimeout(timer);
+            flushTimersByUri.delete(uri);
+        }
+
+        const buffered = pendingCommandsByUri.get(uri);
+        if (!buffered || buffered.length === 0) {
+            pendingCommandsByUri.delete(uri);
+            firstBufferedAtByUri.delete(uri);
+            return;
+        }
+
+        bridge.send(buffered);
+        pendingCommandsByUri.delete(uri);
+        firstBufferedAtByUri.delete(uri);
+    };
+
+    const scheduleFlush = (uri: string) => {
+        const existingTimer = flushTimersByUri.get(uri);
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+        }
+
+        const now = Date.now();
+        const firstBufferedAt = firstBufferedAtByUri.get(uri) ?? now;
+        firstBufferedAtByUri.set(uri, firstBufferedAt);
+
+        const elapsed = now - firstBufferedAt;
+        const remainingMaxWait = Math.max(0, SEND_MAX_WAIT_MS - elapsed);
+        const delay = Math.min(SEND_DEBOUNCE_MS, remainingMaxWait);
+
+        const timer = setTimeout(() => {
+            flushBuffered(uri);
+        }, delay);
+
+        flushTimersByUri.set(uri, timer);
+    };
+
     for (const doc of vscode.workspace.textDocuments) {
         if (!isTrackable(doc)) {
             continue;
@@ -118,6 +164,7 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     const onClose = vscode.workspace.onDidCloseTextDocument((doc) => {
+        flushBuffered(doc.uri.toString());
         snapshots.delete(doc.uri.toString());
     });
 
@@ -151,13 +198,23 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         if (commands.length > 0) {
-            bridge.send(commands);
+            const buffered = pendingCommandsByUri.get(uri) ?? [];
+            buffered.push(...commands);
+            pendingCommandsByUri.set(uri, buffered);
+            scheduleFlush(uri);
         }
 
         snapshots.set(uri, event.document.getText());
     });
 
     context.subscriptions.push(onOpen, onClose, onChange);
+    context.subscriptions.push({
+        dispose: () => {
+            for (const uri of Array.from(pendingCommandsByUri.keys())) {
+                flushBuffered(uri);
+            }
+        }
+    });
 }
 
 export function deactivate() {}
