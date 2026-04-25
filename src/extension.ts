@@ -5,7 +5,9 @@ const WS_URL = 'ws://127.0.0.1:42069';
 const SEND_DEBOUNCE_MS = 100;
 const SEND_MAX_WAIT_MS = 200;
 
-type ChangeCommand = { index: number; add: string } | { index: number; del: number };
+type AddCommand = { index: number; add: string };
+type DelCommand = { index: number; del: number; deleted_text?: string };
+type ChangeCommand = AddCommand | DelCommand;
 
 const snapshots = new Map<string, string>();
 let applyingRemote = 0;
@@ -83,16 +85,16 @@ export function activate(context: vscode.ExtensionContext) {
         applyingRemote += 1;
         try {
             output.appendLine(`[ws] applying ${JSON.stringify(commands)}`);
-            for (const command of commands) {
-                // output.appendLine(`[ws] applying command: ${JSON.stringify(command)}`);
+            for (const command of commands as ChangeCommand[]) {
                 await editor.edit((editBuilder) => {
                     if ('add' in command) {
                         editBuilder.insert(editor.document.positionAt(command.index), command.add);
                     } else {
+                        const del = command.del ?? command.deleted_text?.length ?? 0;
                         editBuilder.delete(
                             new vscode.Range(
                                 editor.document.positionAt(command.index),
-                                editor.document.positionAt(command.index + command.del)
+                                editor.document.positionAt(command.index + del)
                             )
                         );
                     }
@@ -190,7 +192,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (change.rangeLength > 0) {
                 const deleted = before.slice(index, index + change.rangeLength);
                 if (deleted.length > 0) {
-                    commands.push({ index, del: deleted.length });
+                    commands.push({ index, del: deleted.length, deleted_text: deleted });
                 }
             }
             if (change.text.length > 0) {
