@@ -2,8 +2,8 @@ import * as vscode from 'vscode';
 import WebSocket from 'ws';
 
 const WS_URL = 'ws://127.0.0.1:42069';
-const SEND_DEBOUNCE_MS = 75;
-const SEND_MAX_WAIT_MS = 250;
+const SEND_DEBOUNCE_MS = 100;
+const SEND_MAX_WAIT_MS = 200;
 
 type ChangeCommand = { index: number; add: string } | { index: number; del: number };
 
@@ -123,6 +123,7 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
+        output.appendLine(`[flush] commands: ${JSON.stringify(buffered)}`);
         bridge.send(buffered);
         pendingCommandsByUri.delete(uri);
         firstBufferedAtByUri.delete(uri);
@@ -180,7 +181,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         const before = snapshots.get(uri) ?? '';
-        output.appendLine(`[change] changes: ${JSON.stringify(event.contentChanges)}`);
+        // output.appendLine(`[change] changes: ${JSON.stringify(event.contentChanges)}`);
         const changes = [...event.contentChanges].sort((a, b) => b.rangeOffset - a.rangeOffset);
         const commands: ChangeCommand[] = [];
 
