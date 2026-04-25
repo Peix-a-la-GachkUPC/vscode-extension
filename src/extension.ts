@@ -82,10 +82,10 @@ export function activate(context: vscode.ExtensionContext) {
 
         applyingRemote += 1;
         try {
-            await editor.edit((editBuilder) => {
-                output.appendLine(`[ws] applying ${JSON.stringify(commands)}`);
-                for (const command of commands) {
-                    output.appendLine(`[ws] applying command: ${JSON.stringify(command)}`);
+            output.appendLine(`[ws] applying ${JSON.stringify(commands)}`);
+            for (const command of commands) {
+                // output.appendLine(`[ws] applying command: ${JSON.stringify(command)}`);
+                await editor.edit((editBuilder) => {
                     if ('add' in command) {
                         editBuilder.insert(editor.document.positionAt(command.index), command.add);
                     } else {
@@ -96,8 +96,8 @@ export function activate(context: vscode.ExtensionContext) {
                             )
                         );
                     }
-                }
-            });
+                });
+            }
         } finally {
             applyingRemote -= 1;
         }
