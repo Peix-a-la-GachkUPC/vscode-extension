@@ -232,8 +232,11 @@ export function activate(context: vscode.ExtensionContext) {
     let acceptExternalEdits = context.workspaceState.get<boolean>('acceptExternalEdits', true);
 
     const remoteCursorDecorationType = vscode.window.createTextEditorDecorationType({
-        backgroundColor: 'rgba(255, 95, 86, 0.45)',
-        borderRadius: '2px',
+        before: {
+            content: '',
+            border: '2px solid rgba(255, 95, 86, 0.8)',
+            borderRadius: '2px',
+        },
         rangeBehavior: vscode.DecorationRangeBehavior.ClosedOpen
     });
     context.subscriptions.push(remoteCursorDecorationType);
@@ -276,11 +279,7 @@ export function activate(context: vscode.ExtensionContext) {
         const position = toVscodePosition(cursorPos);
         const line = editor.document.lineAt(position.line);
         const hasCharAtPosition = position.character < line.text.length;
-        const range = hasCharAtPosition
-            ? new vscode.Range(position, position.translate(0, 1))
-            : position.character > 0
-                ? new vscode.Range(position.translate(0, -1), position)
-                : new vscode.Range(position, position);
+        const range = new vscode.Range(position, position);
 
         editor.setDecorations(remoteCursorDecorationType, [{ range }]);
     };
