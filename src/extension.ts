@@ -4,8 +4,8 @@ import WebSocket from 'ws';
 import * as path from 'path';
 
 const WS_URL = 'ws://127.0.0.1:42069';
-const SEND_DEBOUNCE_MS = 5;
-const SEND_MAX_WAIT_MS = 10;
+const SEND_DEBOUNCE_MS = 50;
+const SEND_MAX_WAIT_MS = 70;
 
 type TextPos = { line: number; column: number };
 type AddCommand = { pos: TextPos; add: string };
@@ -232,9 +232,8 @@ export function activate(context: vscode.ExtensionContext) {
     let acceptExternalEdits = context.workspaceState.get<boolean>('acceptExternalEdits', true);
 
     const remoteCursorDecorationType = vscode.window.createTextEditorDecorationType({
-        before: {
-            border: '2px solid rgba(255, 95, 86, 0.8)',
-        },
+        backgroundColor: 'rgba(255, 95, 86, 0.45)',
+        outline: '2px solid rgba(255, 95, 86, 0.8)',
         rangeBehavior: vscode.DecorationRangeBehavior.ClosedOpen
     });
     context.subscriptions.push(remoteCursorDecorationType);
@@ -277,7 +276,11 @@ export function activate(context: vscode.ExtensionContext) {
         const position = toVscodePosition(cursorPos);
         const line = editor.document.lineAt(position.line);
         const hasCharAtPosition = position.character < line.text.length;
-        const range = new vscode.Range(position, position);
+        const range = hasCharAtPosition
+            ? new vscode.Range(position, position.translate(0, 1))
+            : position.character > 0
+                ? new vscode.Range(position.translate(0, -1), position)
+                : new vscode.Range(position, position);
 
         editor.setDecorations(remoteCursorDecorationType, [{ range }]);
     };
