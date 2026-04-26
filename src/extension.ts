@@ -117,21 +117,16 @@ async function applyCommandsToDocument(document: vscode.TextDocument, commands: 
     for (const command of commands) {
         const edit = new vscode.WorkspaceEdit();
 
-        var pos = positionFromCommand(document, command);
-
-        // For 0..command.line
-        for (let i = 0; i < pos.line; i += 1) {
-            const entry = newLines.find((entry) => entry.line === i);
-            if (entry) {
-                pos = pos.translate(0, entry.sign);
-            }
+        let pos = positionFromCommand(document, command);
+        const lineDelta = newLines.reduce((acc, entry) => (entry.line < pos.line ? acc + entry.sign : acc), 0);
+        if (lineDelta !== 0) {
+            pos = pos.translate(lineDelta, 0);
         }
 
         if ('add' in command) {
-            edit.insert(document.uri, positionFromCommand(document, command), command.add);
+            edit.insert(document.uri, pos, command.add);
         } else {
-            const start = positionFromCommand(document, command);
-            const del = command.del ?? command.deleted_text?.length ?? 0;
+            const start = pos;
             edit.delete(
                 document.uri,
                 new vscode.Range(
