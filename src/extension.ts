@@ -7,8 +7,9 @@ const WS_URL = 'ws://127.0.0.1:42069';
 const SEND_DEBOUNCE_MS = 5;
 const SEND_MAX_WAIT_MS = 10;
 
-type AddCommand = { index: number; add: string };
-type DelCommand = { index: number; del: number; deleted_text?: string };
+type TextPos = { line: number; column: number };
+type AddCommand = { pos: TextPos; add: string };
+type DelCommand = { pos: TextPos; del: number; deleted_text?: string };
 type FileScoped = { file?: string };
 type ChangeCommand = (AddCommand | DelCommand) & FileScoped;
 type SyncFileEntry = { file: string; content: string };
@@ -18,8 +19,47 @@ type IncomingPayload = ChangeCommand[] | SyncAllPayload;
 const snapshots = new Map<string, string>();
 let applyingRemote = 0;
 
+type LegacyIndexAddCommand = { index: number; add: string } & FileScoped;
+type LegacyIndexDelCommand = { index: number; del: number; deleted_text?: string } & FileScoped;
+type LegacyIndexCommand = LegacyIndexAddCommand | LegacyIndexDelCommand;
+type IncomingChangeCommand = ChangeCommand | LegacyIndexCommand;
+
 function isTrackable(doc: vscode.TextDocument): boolean {
     return doc.uri.scheme === 'file' && vscode.workspace.getWorkspaceFolder(doc.uri) !== undefined;
+}
+
+function toVscodePosition(pos: TextPos): vscode.Position {
+    return new vscode.Position(pos.line, pos.column);
+}
+
+function toWirePosition(pos: vscode.Position): TextPos {
+    return { line: pos.line, column: pos.character };
+}
+
+function positionFromCommand(document: vscode.TextDocument, command: IncomingChangeCommand): vscode.Position {
+    if ('pos' in command) {
+        return toVscodePosition(command.pos);
+    }
+    return document.positionAt(command.index);
+}
+
+function endPositionForDelete(document: vscode.TextDocument, start: vscode.Position, command: IncomingChangeCommand): vscode.Position {
+    if (!('del' in command)) {
+        return start;
+    }
+
+    const deletedText = 'deleted_text' in command ? command.deleted_text : undefined;
+    if (typeof deletedText === 'string') {
+        const parts = deletedText.split('\n');
+        if (parts.length === 1) {
+            return start.translate(0, deletedText.length);
+        }
+        return new vscode.Position(start.line + (parts.length - 1), parts.at(-1)?.length ?? 0);
+    }
+
+    const del = command.del ?? 0;
+    const endOffset = document.offsetAt(start) + del;
+    return document.positionAt(endOffset);
 }
 
 function toScopedFilePath(doc: vscode.TextDocument): string | undefined {
@@ -68,18 +108,19 @@ function uriFromScopedFilePath(scopedFilePath: string): vscode.Uri | undefined {
     return undefined;
 }
 
-async function applyCommandsToDocument(document: vscode.TextDocument, commands: ChangeCommand[]): Promise<void> {
+async function applyCommandsToDocument(document: vscode.TextDocument, commands: IncomingChangeCommand[]): Promise<void> {
     for (const command of commands) {
         const edit = new vscode.WorkspaceEdit();
         if ('add' in command) {
-            edit.insert(document.uri, document.positionAt(command.index), command.add);
+            edit.insert(document.uri, positionFromCommand(document, command), command.add);
         } else {
+            const start = positionFromCommand(document, command);
             const del = command.del ?? command.deleted_text?.length ?? 0;
             edit.delete(
                 document.uri,
                 new vscode.Range(
-                    document.positionAt(command.index),
-                    document.positionAt(command.index + del)
+                    start,
+                    endPositionForDelete(document, start, command)
                 )
             );
         }
@@ -185,7 +226,7 @@ export function activate(context: vscode.ExtensionContext) {
         rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed
     });
     context.subscriptions.push(remoteCursorDecorationType);
-    const remoteCursorByUri = new Map<string, number>();
+    const remoteCursorByUri = new Map<string, TextPos>();
 
     const externalToggleItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     externalToggleItem.command = 'universal-live-share.toggleExternalEdits';
@@ -215,13 +256,13 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         const uri = editor.document.uri.toString();
-        const cursorIndex = remoteCursorByUri.get(uri);
-        if (cursorIndex === undefined) {
+        const cursorPos = remoteCursorByUri.get(uri);
+        if (cursorPos === undefined) {
             editor.setDecorations(remoteCursorDecorationType, []);
             return;
         }
 
-        const position = editor.document.positionAt(cursorIndex);
+        const position = toVscodePosition(cursorPos);
         const line = editor.document.lineAt(position.line);
         const hasCharAtPosition = position.character < line.text.length;
         const range = hasCharAtPosition
@@ -245,15 +286,16 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
-        const commandsByFile = new Map<string, ChangeCommand[]>();
-        const legacyCommands: ChangeCommand[] = [];
+        const commandsByFile = new Map<string, IncomingChangeCommand[]>();
+        const legacyCommands: IncomingChangeCommand[] = [];
 
         if (Array.isArray(payload)) {
-            for (const command of payload) {
-                if (typeof command.file === 'string' && command.file.length > 0) {
-                    const fileCommands = commandsByFile.get(command.file) ?? [];
+            for (const command of payload as unknown as IncomingChangeCommand[]) {
+                const fileField = (command as { file?: unknown }).file;
+                if (typeof fileField === 'string' && fileField.length > 0) {
+                    const fileCommands = commandsByFile.get(fileField) ?? [];
                     fileCommands.push(command);
-                    commandsByFile.set(command.file, fileCommands);
+                    commandsByFile.set(fileField, fileCommands);
                 } else {
                     legacyCommands.push(command);
                 }
@@ -297,7 +339,7 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
 
-            const lastCommand = payload.at(-1) as ChangeCommand | undefined;
+            const lastCommand = payload.at(-1) as IncomingChangeCommand | undefined;
             for (const [scopedPath, fileCommands] of commandsByFile) {
                 const uri = uriFromScopedFilePath(scopedPath);
                 if (!uri) {
@@ -342,7 +384,19 @@ export function activate(context: vscode.ExtensionContext) {
                     return;
                 }
 
-                remoteCursorByUri.set(targetUri, lastCommand.index);
+                let cursorPos: TextPos | undefined;
+                if ('pos' in lastCommand) {
+                    cursorPos = lastCommand.pos;
+                } else if ('index' in lastCommand) {
+                    const editor = vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === targetUri);
+                    const doc = editor?.document;
+                    if (doc) {
+                        cursorPos = toWirePosition(doc.positionAt(lastCommand.index));
+                    }
+                }
+                if (cursorPos) {
+                    remoteCursorByUri.set(targetUri, cursorPos);
+                }
                 for (const visibleEditor of vscode.window.visibleTextEditors) {
                     if (visibleEditor.document.uri.toString() === targetUri) {
                         renderRemoteCursor(visibleEditor);
@@ -502,14 +556,15 @@ export function activate(context: vscode.ExtensionContext) {
 
         for (const change of changes) {
             const index = change.rangeOffset;
+            const pos = toWirePosition(change.range.start);
             if (change.rangeLength > 0) {
                 const deleted = before.slice(index, index + change.rangeLength);
                 if (deleted.length > 0) {
-                    commands.push({ index, del: deleted.length, deleted_text: deleted, file: scopedFilePath });
+                    commands.push({ pos, del: deleted.length, deleted_text: deleted, file: scopedFilePath });
                 }
             }
             if (change.text.length > 0) {
-                commands.push({ index, add: change.text, file: scopedFilePath });
+                commands.push({ pos, add: change.text, file: scopedFilePath });
             }
         }
 
