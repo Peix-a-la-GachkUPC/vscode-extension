@@ -233,9 +233,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     const remoteCursorDecorationType = vscode.window.createTextEditorDecorationType({
         before: {
-            content: '',
             border: '2px solid rgba(255, 95, 86, 0.8)',
-            borderRadius: '2px',
         },
         rangeBehavior: vscode.DecorationRangeBehavior.ClosedOpen
     });
