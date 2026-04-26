@@ -234,7 +234,7 @@ export function activate(context: vscode.ExtensionContext) {
     const remoteCursorDecorationType = vscode.window.createTextEditorDecorationType({
         backgroundColor: 'rgba(255, 95, 86, 0.45)',
         borderRadius: '2px',
-        rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed
+        rangeBehavior: vscode.DecorationRangeBehavior.ClosedOpen
     });
     context.subscriptions.push(remoteCursorDecorationType);
     const remoteCursorByUri = new Map<string, TextPos>();
