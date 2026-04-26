@@ -141,7 +141,7 @@ function createBridge(output: vscode.OutputChannel, onMessage: (message: unknown
             }
 
             try {
-                onMessage(JSON.parse(text).value as unknown);
+                onMessage(JSON.parse(text) as unknown);
             } catch (e) {
                 output.appendLine(`[ws] failed to parse message: ${e instanceof Error ? e.message : String(e)}`);
             }
