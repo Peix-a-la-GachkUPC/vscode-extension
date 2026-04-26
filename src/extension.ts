@@ -4,8 +4,8 @@ import WebSocket from 'ws';
 import * as path from 'path';
 
 const WS_URL = 'ws://127.0.0.1:42069';
-const SEND_DEBOUNCE_MS = 500;
-const SEND_MAX_WAIT_MS = 1000;
+const SEND_DEBOUNCE_MS = 5;
+const SEND_MAX_WAIT_MS = 10;
 
 type AddCommand = { index: number; add: string };
 type DelCommand = { index: number; del: number; deleted_text?: string };
@@ -29,7 +29,7 @@ function toScopedFilePath(doc: vscode.TextDocument): string | undefined {
     }
 
     const relativePath = vscode.workspace.asRelativePath(doc.uri, false).replace(/\\/g, '/');
-    return `${folder.name}/${relativePath}`;
+    return `./${relativePath}`;
 }
 
 function uriFromScopedFilePath(scopedFilePath: string): vscode.Uri | undefined {
