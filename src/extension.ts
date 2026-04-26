@@ -108,9 +108,25 @@ function uriFromScopedFilePath(scopedFilePath: string): vscode.Uri | undefined {
     return undefined;
 }
 
-async function applyCommandsToDocument(document: vscode.TextDocument, commands: IncomingChangeCommand[]): Promise<void> {
+type NewLine = {
+    line: number;
+    sign: -1 | 1;
+    tstamp: number;
+};
+async function applyCommandsToDocument(document: vscode.TextDocument, commands: IncomingChangeCommand[], newLines: NewLine[]): Promise<void> {
     for (const command of commands) {
         const edit = new vscode.WorkspaceEdit();
+
+        var pos = positionFromCommand(document, command);
+
+        // For 0..command.line
+        for (let i = 0; i < pos.line; i += 1) {
+            const entry = newLines.find((entry) => entry.line === i);
+            if (entry) {
+                pos = pos.translate(0, entry.sign);
+            }
+        }
+
         if ('add' in command) {
             edit.insert(document.uri, positionFromCommand(document, command), command.add);
         } else {
@@ -349,7 +365,7 @@ export function activate(context: vscode.ExtensionContext) {
 
                 try {
                     const document = await vscode.workspace.openTextDocument(uri);
-                    await applyCommandsToDocument(document, fileCommands);
+                    await applyCommandsToDocument(document, fileCommands, newLinesByUri.get(uri.toString()) ?? []);
                 } catch (error) {
                     output.appendLine(
                         `[ws] failed to apply changes to ${scopedPath}: ${error instanceof Error ? error.message : String(error)}`
@@ -363,7 +379,7 @@ export function activate(context: vscode.ExtensionContext) {
                     output.appendLine('[ws] legacy payload ignored because no active trackable editor');
                     return;
                 }
-                await applyCommandsToDocument(editor.document, legacyCommands);
+                await applyCommandsToDocument(editor.document, legacyCommands, newLinesByUri.get(editor.document.uri.toString()) ?? []);
             }
 
             if (lastCommand) {
@@ -526,13 +542,34 @@ export function activate(context: vscode.ExtensionContext) {
 
     const onClose = vscode.workspace.onDidCloseTextDocument((doc) => {
         flushBuffered(doc.uri.toString());
-        snapshots.delete(doc.uri.toString());
-        remoteCursorByUri.delete(doc.uri.toString());
+        const uri = doc.uri.toString();
+        snapshots.delete(uri);
+        remoteCursorByUri.delete(uri);
+        newLinesByUri.delete(uri);
     });
 
     const onActiveEditorChange = vscode.window.onDidChangeActiveTextEditor((editor) => {
         renderRemoteCursor(editor);
     });
+
+
+    const newLinesByUri = new Map<string, NewLine[]>();
+    const NEW_LINE_RETENTION_MS = 1000;
+    const pruneNewLinesForUri = (uri: string) => {
+        const now = Date.now();
+        const cutoff = now - NEW_LINE_RETENTION_MS;
+        const bucket = newLinesByUri.get(uri);
+        if (!bucket || bucket.length === 0) {
+            newLinesByUri.delete(uri);
+            return;
+        }
+        const pruned = bucket.filter((entry) => entry.tstamp >= cutoff);
+        if (pruned.length === 0) {
+            newLinesByUri.delete(uri);
+        } else {
+            newLinesByUri.set(uri, pruned);
+        }
+    };
 
     const onChange = vscode.workspace.onDidChangeTextDocument((event) => {
         if (!isTrackable(event.document) || event.contentChanges.length === 0) {
@@ -542,6 +579,7 @@ export function activate(context: vscode.ExtensionContext) {
         const uri = event.document.uri.toString();
         if (applyingRemote > 0) {
             snapshots.set(uri, event.document.getText());
+            pruneNewLinesForUri(uri);
             return;
         }
 
@@ -554,16 +592,32 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
+        const pushNewLines = (startLine: number, sign: -1 | 1, count: number) => {
+            if (count <= 0) {
+                return;
+            }
+            const tstamp = Date.now();
+            const bucket = newLinesByUri.get(uri) ?? [];
+            for (let i = 0; i < count; i += 1) {
+                bucket.push({ line: startLine + i, sign, tstamp });
+            }
+            newLinesByUri.set(uri, bucket);
+        };
+
         for (const change of changes) {
             const index = change.rangeOffset;
             const pos = toWirePosition(change.range.start);
             if (change.rangeLength > 0) {
                 const deleted = before.slice(index, index + change.rangeLength);
                 if (deleted.length > 0) {
+                    const deletedNewlines = (deleted.match(/\n/g) ?? []).length;
+                    pushNewLines(pos.line, -1, deletedNewlines);
                     commands.push({ pos, del: deleted.length, deleted_text: deleted, file: scopedFilePath });
                 }
             }
             if (change.text.length > 0) {
+                const addedNewlines = (change.text.match(/\n/g) ?? []).length;
+                pushNewLines(pos.line, 1, addedNewlines);
                 commands.push({ pos, add: change.text, file: scopedFilePath });
             }
         }
