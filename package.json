@@ -18,6 +18,14 @@
       {
         "command": "universal-live-share.helloWorld",
         "title": "Hello World"
+      },
+      {
+        "command": "universal-live-share.toggleExternalEdits",
+        "title": "Universal Live Share: Toggle External Edits"
+      },
+      {
+        "command": "universal-live-share.syncAllFiles",
+        "title": "Universal Live Share: Sync All Files"
       }
     ]
   },
